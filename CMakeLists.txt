@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.15)
 
-project(SurgeReflect LANGUAGES C CXX)
+project(Rapt0R LANGUAGES C CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
