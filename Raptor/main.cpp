@@ -1,5 +1,18 @@
-#define RAPTOR_IMPLEMENTATION 1
-#include <Raptor/Raptor.hpp>
+/*
+  +------------------------------------------------+
+  |  _____             _    ___  _____    01010010 |
+  | │  __ ╲           │ │  ╱ _ ╲│  __ ╲   01100001 |
+  | │ │__) │__ _ _ __ │ │_│ │ │ │ │__) │  01110000 |
+  | │  _  ╱╱ _` │ '_ ╲│ __│ │ │ │  _  ╱   01110100 |
+  | │ │ ╲ ╲ (_│ │ │_) │ │_│ │_│ │ │ ╲ ╲   00110000 |
+  | │_│  ╲_╲__,_│ .__╱ ╲__│╲___╱│_│  ╲_╲  01010010 |
+  |             │ │ A fast and simple C++ 00010100 |
+  |             │_│ binary serialization library   |
+  +------------------------------------------------+
+*/
+
+// Include core headers
+#include "Raptor/Raptor.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -11,508 +24,273 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <array>
+#include <map>
+#include <unordered_map>
+#include <optional>
+#include <tuple>
+#include <utility>
+#include <algorithm>
 
-static int gTestsPassed = 0;
-static int gTestsFailed = 0;
-
-#define R0R_EXPECT(cond)                                                                         \
-    do                                                                                           \
-    {                                                                                            \
-        if(!(cond))                                                                              \
-        {                                                                                        \
-            std::cerr << "  [FAIL] Line " << __LINE__ << ": Expected (" << #cond << ")\n";       \
-            ++gTestsFailed;                                                                      \
-            return false;                                                                        \
-        }                                                                                        \
-    } while(0)
-
-#define R0R_RUN_TEST(testFunc)                                                                   \
-    do                                                                                           \
-    {                                                                                            \
-        std::cout << "[RUN ] " << #testFunc << "...\n";                                          \
-        if(testFunc())                                                                           \
-        {                                                                                        \
-            std::cout << "[PASS] " << #testFunc << "\n";                                         \
-            ++gTestsPassed;                                                                      \
-        }                                                                                        \
-    } while(0)
-
-
-// 1. POD Blittable Types
-struct Vec3
+namespace Rapt0R::Benchmark
 {
-    float x, y, z;
-
-    constexpr bool operator==(const Vec3& other) const noexcept
+    // Compiler optimization blocker
+    template <typename T>
+    R0R_INLINE void DoNotOptimize(T const& value) noexcept
     {
-        return x == other.x && y == other.y && z == other.z;
-    }
-};
-
-struct alignas(16) Mat4
-{
-    float m[16];
-
-    bool operator==(const Mat4& other) const noexcept
-    {
-        return std::memcmp(m, other.m, sizeof(m)) == 0;
-    }
-};
-
-// 2. Third-Party External Type (Path: HasFreeSerialize / HasFreeDeserialize)
-struct ExternalAABB
-{
-    Vec3 min;
-    Vec3 max;
-};
-
-namespace Rapt0R
-{
-    inline void Rapt0RSerialize(Writer& writer, const ExternalAABB& box) noexcept
-    {
-        writer << box.min << box.max;
-    }
-
-    inline void Rapt0RDeserialize(Reader& reader, ExternalAABB& box) noexcept
-    {
-        reader >> box.min >> box.max;
-    }
-}
-
-// 3. Complex Game Object (Path: HasMemberSerialize / HasMemberDeserialize)
-struct SubMesh
-{
-    uint32_t materialId = 0;
-    std::string name;
-    std::vector<Vec3> vertices;
-
-    void Rapt0RSerialize(Rapt0R::Writer& w) const noexcept
-    {
-        w << materialId << name << vertices;
-    }
-
-    void Rapt0RDeserialize(Rapt0R::Reader& r)
-    {
-        r >> materialId >> name >> vertices;
-    }
-
-    bool operator==(const SubMesh& other) const noexcept
-    {
-        return materialId == other.materialId && name == other.name && vertices == other.vertices;
-    }
-};
-
-struct SceneNode
-{
-    uint64_t uuid = 0;
-    std::string_view debugTag;      // Zero-copy view
-    Mat4 worldTransform {};          // POD struct
-    ExternalAABB bounds {};          // Free-function serialized struct
-    std::vector<SubMesh> subMeshes; // Nested non-POD vector
-
-    void Rapt0RSerialize(Rapt0R::Writer& w) const noexcept
-    {
-        w << uuid << debugTag << worldTransform << bounds << subMeshes;
-    }
-
-    void Rapt0RDeserialize(Rapt0R::Reader& r)
-    {
-        r >> uuid >> debugTag >> worldTransform >> bounds >> subMeshes;
-    }
-};
-
-// ============================================================================
-// Unit Tests
-// ============================================================================
-
-// Test 1: Primitives and Trivially Copyable POD Structs
-bool TestPrimitivesAndPOD()
-{
-    Rapt0R::Writer writer(256);
-
-    const uint8_t u8 = 250;
-    const int32_t i32 = -133742;
-    const uint64_t u64 = 0xCAFEBABEDEADBEEFULL;
-    const Vec3 pos = { 12.5f, -45.0f, 100.25f };
-
-    writer << u8 << i32 << u64 << pos;
-    R0R_EXPECT(writer);
-    R0R_EXPECT(writer.Size() == sizeof(u8) + sizeof(i32) + sizeof(u64) + sizeof(Vec3));
-
-    Rapt0R::Reader reader(writer.WrittenSpan());
-
-    uint8_t outU8 = 0;
-    int32_t outI32 = 0;
-    uint64_t outU64 = 0;
-    Vec3 outPos = {};
-
-    reader >> outU8 >> outI32 >> outU64 >> outPos;
-
-    R0R_EXPECT(reader);
-    R0R_EXPECT(reader.RemainingBytes() == 0);
-    R0R_EXPECT(outU8 == u8);
-    R0R_EXPECT(outI32 == i32);
-    R0R_EXPECT(outU64 == u64);
-    R0R_EXPECT(outPos == pos);
-
-    return true;
-}
-
-// Test 2: Zero-Copy StringView & Allocating String
-bool TestStringsAndZeroCopy()
-{
-    Rapt0R::Writer writer(256);
-
-    const std::string_view srcView = "SurgeEngine_Asset_Pak_v1";
-    const std::string srcStr = "DynamicShaderName_PBR";
-    const std::string_view emptyView = "";
-
-    writer << srcView << srcStr << emptyView;
-    R0R_EXPECT(writer);
-
-    Rapt0R::Reader reader(writer.WrittenSpan());
-
-    std::string_view outView;
-    std::string outStr;
-    std::string_view outEmpty;
-
-    reader >> outView >> outStr >> outEmpty;
-    R0R_EXPECT(reader);
-    R0R_EXPECT(outView == srcView);
-    R0R_EXPECT(outStr == srcStr);
-    R0R_EXPECT(outEmpty.empty());
-
-    const auto* bufStart = reinterpret_cast<const char*>(writer.Data());
-    const auto* bufEnd = bufStart + writer.Size();
-    R0R_EXPECT(outView.data() >= bufStart && outView.data() < bufEnd);
-
-    return true;
-}
-
-// Test 3: Contiguous POD Vectors & Empty Vector Stale-Data Clearing
-bool TestVectorsAndEmptyClear()
-{
-    Rapt0R::Writer writer(512);
-
-    const std::vector<Vec3> waypoints = {
-        { 1.0f, 2.0f, 3.0f },
-        { 4.0f, 5.0f, 6.0f },
-        { 7.0f, 8.0f, 9.0f }
-    };
-    const std::vector<int> emptyVec = {};
-
-    writer << waypoints << emptyVec;
-    R0R_EXPECT(writer);
-
-    Rapt0R::Reader reader(writer.WrittenSpan());
-
-    std::vector<Vec3> outWaypoints;
-    // Pre-populate with stale items to verify ReadVector clears on count == 0
-    std::vector<int> staleVec = { 99, 100, 101 };
-
-    reader >> outWaypoints >> staleVec;
-
-    R0R_EXPECT(reader);
-    R0R_EXPECT(outWaypoints == waypoints);
-    R0R_EXPECT(staleVec.empty());
-
-    return true;
-}
-
-// Test 4: Zero-Copy Aligned Span Extraction (SIMD / GPU Ready)
-bool TestAlignedZeroCopySpan()
-{
-    Rapt0R::Writer writer(1024);
-
-    // 3-byte string to intentionally misalign the stream cursor (4 + 3 = 7 bytes)
-    writer << std::string_view("Odd");
-    R0R_EXPECT(writer.Size() == 7);
-
-    // Write an array of 16-byte aligned Mat4 structs with alignToType = true
-    std::vector<Mat4> matrices(4);
-    for(int i = 0; i < 4; ++i)
-        matrices[i].m[0] = static_cast<float>(i + 1);
-
-    bool spanWritten = writer.WriteSpan(std::span<const Mat4>(matrices), true);
-    R0R_EXPECT(spanWritten);
-
-    Rapt0R::Reader reader(writer.WrittenSpan());
-
-    std::string_view prefix;
-    reader >> prefix;
-    R0R_EXPECT(prefix == "Odd");
-
-    std::span<const Mat4> zeroCopyMatrices;
-    bool spanRead = reader.ReadSpan(zeroCopyMatrices, true);
-    R0R_EXPECT(spanRead);
-    R0R_EXPECT(zeroCopyMatrices.size() == 4);
-
-    // Verify 16-byte alignment offset and zero-copy pointer match
-    R0R_EXPECT((reinterpret_cast<uintptr_t>(zeroCopyMatrices.data()) % alignof(Mat4)) == 0);
-    for(int i = 0; i < 4; ++i)
-        R0R_EXPECT(zeroCopyMatrices[i] == matrices[i]);
-
-    return true;
-}
-
-// Test 5: Deep Composite Hierarchy (Member + Free Function + Nested Non-POD Vector)
-bool TestCompositeSceneNode()
-{
-    SceneNode original;
-    original.uuid = 0x1122334455667788ULL;
-    original.debugTag = "RootBossNode";
-    for(int i = 0; i < 16; ++i) original.worldTransform.m[i] = static_cast<float>(i);
-    original.bounds = { { -10.f, -10.f, -10.f }, { 10.f, 10.f, 10.f } };
-
-    original.subMeshes.push_back(SubMesh { 101, "ArmorPlate", { {0.f, 0.f, 0.f}, {1.f, 1.f, 1.f} } });
-    original.subMeshes.push_back(SubMesh { 202, "EnergyCore", { {2.f, 3.f, 4.f} } });
-
-    Rapt0R::Writer writer(64); // Small initial capacity to test automatic geometric Grow()
-    writer << original;
-    R0R_EXPECT(writer);
-
-    Rapt0R::Reader reader(writer.WrittenSpan());
-    SceneNode loaded;
-    reader >> loaded;
-
-    R0R_EXPECT(reader);
-    R0R_EXPECT(reader.RemainingBytes() == 0);
-    R0R_EXPECT(loaded.uuid == original.uuid);
-    R0R_EXPECT(loaded.debugTag == original.debugTag);
-    R0R_EXPECT(loaded.worldTransform == original.worldTransform);
-    R0R_EXPECT(loaded.bounds.min == original.bounds.min);
-    R0R_EXPECT(loaded.bounds.max == original.bounds.max);
-    R0R_EXPECT(loaded.subMeshes == original.subMeshes);
-
-    return true;
-}
-
-// Test 6: Unchecked Fast-Path (Batch EnsureCapacity / EnsureRemaining)
-bool TestUncheckedFastPath()
-{
-    Rapt0R::Byte stackBuf[64] = {};
-    Rapt0R::Writer writer(stackBuf, sizeof(stackBuf));
-
-    constexpr size_t batchSize = sizeof(uint32_t) + sizeof(float) + sizeof(uint64_t);
-    R0R_EXPECT(writer.EnsureCapacity(batchSize));
-
-    writer.WriteUnchecked<uint32_t>(777);
-    writer.WriteUnchecked<float>(3.14159f);
-    writer.WriteUnchecked<uint64_t>(999999999ULL);
-
-    Rapt0R::Reader reader(writer.WrittenSpan());
-    R0R_EXPECT(reader.EnsureRemaining(batchSize));
-
-    const auto a = reader.ReadUnchecked<uint32_t>();
-    const auto b = reader.ReadUnchecked<float>();
-    const auto c = reader.ReadUnchecked<uint64_t>();
-
-    R0R_EXPECT(a == 777);
-    R0R_EXPECT(std::abs(b - 3.14159f) < 1e-5f);
-    R0R_EXPECT(c == 999999999ULL);
-    R0R_EXPECT(reader.RemainingBytes() == 0);
-
-    return true;
-}
-
-// Test 7: Bounds Protection & Fixed-Buffer Overflow Safety
-bool TestOverflowProtection()
-{
-    Rapt0R::Byte tinyStack[8] = {};
-    Rapt0R::Writer fixedWriter(tinyStack, sizeof(tinyStack));
-
-    fixedWriter << uint64_t(12345); // Exactly 8 bytes: should succeed
-    R0R_EXPECT(fixedWriter);
-
-    fixedWriter << uint8_t(1);      // 9th byte on non-owning fixed buffer: MUST fail!
-    R0R_EXPECT(fixedWriter.HasError());
-    R0R_EXPECT(fixedWriter.Status() == Rapt0R::ErrorCode::BUFFER_OVERFLOW);
-
-    // Reader overflow check
-    Rapt0R::Reader reader(tinyStack, sizeof(tinyStack));
-    uint64_t val = 0;
-    uint32_t extra = 0;
-
-    reader >> val;
-    R0R_EXPECT(reader);
-    R0R_EXPECT(val == 12345);
-
-    reader >> extra; // Past end of buffer: MUST fail safely!
-    R0R_EXPECT(reader.HasError());
-    R0R_EXPECT(reader.Status() == Rapt0R::ErrorCode::BUFFER_OVERFLOW);
-
-    return true;
-}
-
-// ============================================================================
-// Throughput Benchmark (GB/s)
-// ============================================================================
-
-// Prevents MSVC / Clang / GCC from optimizing away benchmark results in Release mode
-template <typename T>
-R0R_INLINE void DoNotOptimize(T const& value)
-{
 #if defined(_MSC_VER)
-    _ReadWriteBarrier();
-    volatile const char* p = reinterpret_cast<volatile const char*>(&value);
-    (void)*p;
+        _ReadWriteBarrier();
+        volatile const char* p = reinterpret_cast<volatile const char*>(&value);
+        (void)*p;
 #else
-    asm volatile("" : : "r,m"(value) : "memory");
+        asm volatile("" : : "r,m"(value) : "memory");
 #endif
+    }
+
+    struct BenchmarkVec3
+    {
+        float x, y, z;
+        constexpr bool operator==(const BenchmarkVec3& other) const noexcept
+        {
+            return x == other.x && y == other.y && z == other.z;
+        }
+    };
+
+    // Extreme Torture Complex Entity containing nested STL containers, optional flags, maps, and tuples
+    struct StressTestEntity
+    {
+        uint64_t entityId = 0;
+        std::string_view nameTag; // Zero-copy view
+        BenchmarkVec3 position { 1.f, 2.f, 3.f };
+        std::array<float, 4> rotationQuaternion { 0.f, 0.f, 0.f, 1.f };
+        std::optional<double> overrideHealth;
+        std::vector<uint32_t> assetIndices;
+        std::pair<int32_t, int32_t> gridCoordinates { -10, 42 };
+        std::tuple<char, uint16_t, float> metadata { 'R', uint16_t(1024), 3.14f };
+        std::unordered_map<std::string, uint64_t> attributes;
+
+        // Fused Write/Read: one bounds check per run of flat fields instead of one per field
+        void Rapt0RSerialize(Rapt0R::Writer& w) const noexcept
+        {
+            w.Write(entityId, nameTag, position, rotationQuaternion, overrideHealth, assetIndices, gridCoordinates, metadata, attributes);
+        }
+
+        void Rapt0RDeserialize(Rapt0R::Reader& r)
+        {
+            r.Read(entityId, nameTag, position, rotationQuaternion, overrideHealth, assetIndices, gridCoordinates, metadata, attributes);
+        }
+
+        bool operator==(const StressTestEntity&) const = default;
+    };
+
+    // Benchmarks are worthless if the data does not round-trip, so every workload is verified
+    inline bool gAllPassed = true;
+
+    inline void Verify(bool condition, const char* what)
+    {
+        if(!condition)
+        {
+            std::cout << "    !! VERIFICATION FAILED: " << what << "\n";
+            gAllPassed = false;
+        }
+    }
+
+    struct TestStats
+    {
+        double minGBs;
+        double medianGBs;
+        double maxGBs;
+    };
+
+    template <typename Func>
+    inline TestStats MeasureGBs(size_t bytesPerPass, int passes, Func&& fn)
+    {
+        std::vector<double> timesSec;
+        timesSec.reserve(passes);
+
+        // Warmup
+        fn();
+        fn();
+
+        for(int i = 0; i < passes; ++i)
+        {
+            auto t0 = std::chrono::high_resolution_clock::now();
+            fn();
+            auto t1 = std::chrono::high_resolution_clock::now();
+            timesSec.push_back(std::chrono::duration<double>(t1 - t0).count());
+        }
+
+        std::sort(timesSec.begin(), timesSec.end());
+        const double gb = static_cast<double>(bytesPerPass) / (1024.0 * 1024.0 * 1024.0);
+
+        return {
+            gb / timesSec.back(),
+            gb / timesSec[passes / 2],
+            gb / timesSec.front()
+        };
+    }
+
+    inline void RunIntenseSuite()
+    {
+        std::cout << "\n================================================================================\n";
+        std::cout << " RAPT0R INTENSE C++20 BINARY ENGINE SUITE & BENCHMARK\n";
+        std::cout << "================================================================================\n";
+        std::cout << std::fixed << std::setprecision(2);
+
+        // --------------------------------------------------------------------
+        // WORKLOAD 1: Bulk POD Vertex Blit Test (32 MB)
+        // --------------------------------------------------------------------
+        {
+            constexpr size_t numVertices = 2'800'000;
+            std::vector<BenchmarkVec3> srcMesh(numVertices, { 12.34f, 56.78f, 90.12f });
+            const size_t payloadBytes = sizeof(uint32_t) + numVertices * sizeof(BenchmarkVec3);
+
+            Rapt0R::Writer writer(payloadBytes + 128);
+            writer.Write(srcMesh);
+
+            std::vector<BenchmarkVec3> dstMesh;
+            dstMesh.reserve(numVertices);
+
+            auto writeStats = MeasureGBs(payloadBytes, 50, [&]() {
+                writer.Clear();
+                writer.Write(srcMesh);
+                DoNotOptimize(writer.Data());
+                                         });
+
+            bool readOk = true;
+            auto readStats = MeasureGBs(payloadBytes, 50, [&]() {
+                Rapt0R::Reader reader(writer.WrittenSpan());
+                reader.Read(dstMesh);
+                readOk = readOk && !reader.HasError();
+                DoNotOptimize(dstMesh.data());
+                                        });
+
+            // Reading into a fresh vector pays for the allocation + zero-fill that the reuse case above hides
+            auto coldReadStats = MeasureGBs(payloadBytes, 20, [&]() {
+                std::vector<BenchmarkVec3> fresh;
+                Rapt0R::Reader reader(writer.WrittenSpan());
+                reader.Read(fresh);
+                readOk = readOk && !reader.HasError();
+                DoNotOptimize(fresh.data());
+                                            });
+
+            // Same fresh read, but the allocator skips the zero-fill so every byte is written once
+            using FastMesh = std::vector<BenchmarkVec3, Rapt0R::DefaultInitAllocator<BenchmarkVec3>>;
+            bool fastOk = true;
+            auto coldFastReadStats = MeasureGBs(payloadBytes, 20, [&]() {
+                FastMesh fresh;
+                Rapt0R::Reader reader(writer.WrittenSpan());
+                reader.Read(fresh);
+                fastOk = fastOk && !reader.HasError();
+                DoNotOptimize(fresh.data());
+                                                });
+            {
+                FastMesh check;
+                Rapt0R::Reader reader(writer.WrittenSpan());
+                reader.Read(check);
+                fastOk = fastOk && !reader.HasError() && std::equal(check.begin(), check.end(), srcMesh.begin(), srcMesh.end());
+            }
+
+            Verify(!writer.HasError(), "mesh writer status");
+            Verify(readOk, "mesh reader status");
+            Verify(fastOk, "mesh default-init read");
+            Verify(dstMesh == srcMesh, "mesh round-trip contents");
+
+            std::cout << "[1] Bulk Vertex Mesh (" << (payloadBytes / (1024.0 * 1024.0)) << " MB):\n";
+            std::cout << "    Write Throughput : Median " << std::setw(6) << writeStats.medianGBs << " GB/s (Peak " << writeStats.maxGBs << ")\n";
+            std::cout << "    Read (reuse)     : Median " << std::setw(6) << readStats.medianGBs << " GB/s (Peak " << readStats.maxGBs << ")\n";
+            std::cout << "    Read (fresh vec) : Median " << std::setw(6) << coldReadStats.medianGBs << " GB/s (Peak " << coldReadStats.maxGBs << ")\n";
+            std::cout << "    Read (fresh, DefaultInitAllocator) : Median " << std::setw(6) << coldFastReadStats.medianGBs << " GB/s (Peak " << coldFastReadStats.maxGBs << ")\n\n";
+        }
+
+        // --------------------------------------------------------------------
+        // WORKLOAD 2: Complex Heterogeneous Scene Graph (10,000 Heavy Entities)
+        // Tests std::optional, std::array, std::pair, std::tuple, std::unordered_map
+        // --------------------------------------------------------------------
+        {
+            constexpr size_t entityCount = 10'000;
+            std::vector<StressTestEntity> srcScene(entityCount);
+            for(size_t i = 0; i < entityCount; ++i)
+            {
+                auto& e = srcScene[i];
+                e.entityId = 0x10000000ULL + i;
+                e.nameTag = "CyberneticRenderNode_Alpha_X";
+                e.overrideHealth = (i % 2 == 0) ? std::optional<double>(100.0) : std::nullopt;
+                e.assetIndices = { 101, 202, 303, 404, 505 };
+                e.attributes["ShaderID"] = 0xDEADBEEF;
+                e.attributes["MaterialPriority"] = i;
+            }
+
+            Rapt0R::Writer writer(entityCount * 256);
+            writer.Write(srcScene);
+
+            std::vector<StressTestEntity> dstScene(entityCount);
+
+            auto writeStats = MeasureGBs(writer.Size(), 30, [&]() {
+                writer.Clear();
+                writer.Write(srcScene);
+                DoNotOptimize(writer.Data());
+                                         });
+
+            bool readOk = true;
+            auto readStats = MeasureGBs(writer.Size(), 30, [&]() {
+                Rapt0R::Reader reader(writer.WrittenSpan());
+                reader.Read(dstScene);
+                readOk = readOk && !reader.HasError();
+                DoNotOptimize(dstScene.data());
+                                        });
+
+            Verify(!writer.HasError(), "scene writer status");
+            Verify(readOk, "scene reader status");
+            Verify(dstScene == srcScene, "scene round-trip contents");
+
+            std::cout << "[2] Heterogeneous Scene Graph (" << entityCount << " Complex Entities = " << (writer.Size() / (1024.0 * 1024.0)) << " MB):\n";
+            std::cout << "    Write Throughput : Median " << std::setw(6) << writeStats.medianGBs << " GB/s (Peak " << writeStats.maxGBs << ")\n";
+            std::cout << "    Read Throughput  : Median " << std::setw(6) << readStats.medianGBs << " GB/s (Peak " << readStats.maxGBs << ")\n\n";
+        }
+
+        // --------------------------------------------------------------------
+        // WORKLOAD 3: Zero-Copy Asset Span Latency (O(1))
+        // Note: this measures a 4-byte header read + pointer arithmetic, not data throughput
+        // --------------------------------------------------------------------
+        {
+            constexpr size_t count = 1'000'000;
+            std::vector<BenchmarkVec3> verts(count, { 1.f, 2.f, 3.f });
+            Rapt0R::Writer w(count * sizeof(BenchmarkVec3) + 64);
+            w.WriteSpan(std::span<const BenchmarkVec3>(verts), true);
+
+            std::span<const BenchmarkVec3> outSpan;
+            constexpr int spanPasses = 1'000'000;
+            bool readOk = true;
+
+            auto t0 = std::chrono::high_resolution_clock::now();
+            for(int i = 0; i < spanPasses; ++i)
+            {
+                Rapt0R::Reader r(w.WrittenSpan());
+                readOk = r.ReadSpan(outSpan, true) && readOk;
+                DoNotOptimize(outSpan.data());
+            }
+            auto t1 = std::chrono::high_resolution_clock::now();
+
+            Verify(readOk, "span reader status");
+            Verify(std::equal(outSpan.begin(), outSpan.end(), verts.begin(), verts.end()), "span contents");
+
+            const double nsPerCall = std::chrono::duration<double, std::nano>(t1 - t0).count() / spanPasses;
+            std::cout << "[3] Zero-Copy Asset Span Extraction (O(1) lookup):\n";
+            std::cout << "    Latency          : " << nsPerCall << " ns per 12 MB mesh view\n";
+        }
+
+        std::cout << "================================================================================\n";
+        if(gAllPassed)
+            std::cout << " ALL WORKLOADS ROUND-TRIPPED AND VERIFIED.\n";
+        else
+            std::cout << " VERIFICATION FAILED, THROUGHPUT NUMBERS ABOVE ARE NOT VALID.\n";
+        std::cout << "================================================================================\n";
+    }
 }
 
-struct BenchmarkEntity
-{
-    uint64_t id = 0;
-    float pos[3] = { 1.0f, 2.0f, 3.0f };
-    float rot[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
-    int32_t health = 100;
-    int32_t mana = 50;
-    bool isAlive = true;
-    std::string_view name;
-    std::vector<uint32_t> inventory;
-
-    void Rapt0RSerialize(Rapt0R::Writer& w) const noexcept
-    {
-        w.WritePODs(id, pos, rot, health, mana, isAlive);
-        w << name << inventory;
-    }
-
-    void Rapt0RDeserialize(Rapt0R::Reader& r)
-    {
-        r.ReadPODs(id, pos, rot, health, mana, isAlive);
-        r >> name >> inventory;
-    }
-};
-
-void RunThroughputBenchmark()
-{
-    std::cout << "\n================================================================\n";
-    std::cout << " Rapt0R Comprehensive Benchmark Suite (Release Profile)\n";
-    std::cout << "================================================================\n";
-    std::cout << std::fixed << std::setprecision(2);
-
-    // ------------------------------------------------------------------------
-    // WORKLOAD 1: 23 MB Contiguous Vertex Buffer (RAM Bandwidth Limit)
-    // ------------------------------------------------------------------------
-    {
-        constexpr size_t numVertices = 2'000'000;
-        std::vector<Vec3> srcMesh(numVertices, Vec3 { 1.0f, 2.0f, 3.0f });
-        const size_t payloadBytes = sizeof(uint32_t) + numVertices * sizeof(Vec3);
-
-        Rapt0R::Writer writer(payloadBytes + 64);
-        constexpr int iterations = 100;
-
-        auto t0 = std::chrono::high_resolution_clock::now();
-        for(int i = 0; i < iterations; ++i)
-        {
-            writer.Clear();
-            writer << srcMesh;
-            DoNotOptimize(writer.Data());
-        }
-        auto t1 = std::chrono::high_resolution_clock::now();
-
-        std::vector<Vec3> dstMesh;
-        dstMesh.reserve(numVertices);
-        auto t2 = std::chrono::high_resolution_clock::now();
-        for(int i = 0; i < iterations; ++i)
-        {
-            Rapt0R::Reader reader(writer.WrittenSpan());
-            reader >> dstMesh;
-            DoNotOptimize(dstMesh.data());
-        }
-        auto t3 = std::chrono::high_resolution_clock::now();
-
-        std::span<const Vec3> zeroCopySpan;
-        constexpr int spanIterations = 1'000'000;
-        auto t4 = std::chrono::high_resolution_clock::now();
-        for(int i = 0; i < spanIterations; ++i)
-        {
-            Rapt0R::Reader reader(writer.WrittenSpan());
-            reader.ReadSpan(zeroCopySpan);
-            DoNotOptimize(zeroCopySpan.data());
-        }
-        auto t5 = std::chrono::high_resolution_clock::now();
-
-        const double totalGB = (static_cast<double>(payloadBytes) * iterations) / (1024.0 * 1024.0 * 1024.0);
-        const double writeSec = std::chrono::duration<double>(t1 - t0).count();
-        const double readVecSec = std::chrono::duration<double>(t3 - t2).count();
-        const double readSpanNs = std::chrono::duration<double, std::nano>(t5 - t4).count() / spanIterations;
-
-        std::cout << "[1] Bulk Vertex Payload (22.89 MB x " << iterations << " passes)\n";
-        std::cout << "    Write Throughput        : " << (totalGB / writeSec) << " GB/s\n";
-        std::cout << "    Read (std::vector Copy) : " << (totalGB / readVecSec) << " GB/s\n";
-        std::cout << "    Read (Zero-Copy Span)   : " << readSpanNs << " ns per call\n\n";
-    }
-
-    // ------------------------------------------------------------------------
-    // WORKLOAD 2: 50,000 Complex Game Entities (Branching + Strings + Vectors)
-    // ------------------------------------------------------------------------
-    {
-        constexpr size_t numEntities = 50'000;
-        std::vector<BenchmarkEntity> srcScene(numEntities);
-        for(size_t i = 0; i < numEntities; ++i)
-        {
-            srcScene[i].id = i;
-            srcScene[i].name = "CyberDragon_Boss_Entity";
-            srcScene[i].inventory = { 10, 20, 30, 40, 50, 60, 70, 80 };
-        }
-
-        Rapt0R::Writer writer(numEntities * 128);
-        constexpr int iterations = 50;
-
-        auto t0 = std::chrono::high_resolution_clock::now();
-        for(int i = 0; i < iterations; ++i)
-        {
-            writer.Clear();
-            writer << srcScene;
-            DoNotOptimize(writer.Data());
-        }
-        auto t1 = std::chrono::high_resolution_clock::now();
-
-        // Pre-allocate target scene so we measure pure deserialization + vector reuse
-        std::vector<BenchmarkEntity> dstScene(numEntities);
-        auto t2 = std::chrono::high_resolution_clock::now();
-        for(int i = 0; i < iterations; ++i)
-        {
-            Rapt0R::Reader reader(writer.WrittenSpan());
-            reader >> dstScene;
-            DoNotOptimize(dstScene.data());
-        }
-        auto t3 = std::chrono::high_resolution_clock::now();
-
-        const size_t sceneBytes = writer.Size();
-        const double totalGB = (static_cast<double>(sceneBytes) * iterations) / (1024.0 * 1024.0 * 1024.0);
-        const double writeSec = std::chrono::duration<double>(t1 - t0).count();
-        const double readSec = std::chrono::duration<double>(t3 - t2).count();
-        const double writeMsPerScene = (writeSec * 1000.0) / iterations;
-        const double readMsPerScene = (readSec * 1000.0) / iterations;
-
-        std::cout << "[2] Complex Scene Graph (50,000 Entities = " << (sceneBytes / (1024.0 * 1024.0)) << " MB)\n";
-        std::cout << "    Write Scene Throughput  : " << (totalGB / writeSec) << " GB/s (" << writeMsPerScene << " ms / 50k entities)\n";
-        std::cout << "    Read Scene Throughput   : " << (totalGB / readSec) << " GB/s (" << readMsPerScene << " ms / 50k entities)\n";
-    }
-    std::cout << "================================================================\n";
-}
 int main()
 {
-    std::cout << "========================================\n";
-    std::cout << " Running Rapt0R Test Suite\n";
-    std::cout << "========================================\n";
-
-    R0R_RUN_TEST(TestPrimitivesAndPOD);
-    R0R_RUN_TEST(TestStringsAndZeroCopy);
-    R0R_RUN_TEST(TestVectorsAndEmptyClear);
-    R0R_RUN_TEST(TestAlignedZeroCopySpan);
-    R0R_RUN_TEST(TestCompositeSceneNode);
-    R0R_RUN_TEST(TestUncheckedFastPath);
-    R0R_RUN_TEST(TestOverflowProtection);
-
-    std::cout << "----------------------------------------\n";
-    std::cout << "Summary: " << gTestsPassed << " passed, " << gTestsFailed << " failed.\n";
-
-    if(gTestsFailed == 0)
-        RunThroughputBenchmark();
-
-    return gTestsFailed == 0 ? 0 : 1;
+    Rapt0R::Benchmark::RunIntenseSuite();
+    return Rapt0R::Benchmark::gAllPassed ? 0 : 1;
 }

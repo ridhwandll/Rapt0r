@@ -12,6 +12,7 @@
 */
 
 #pragma once
-#define RAPTOR_VERSION "0.1.0"
+#define RAPTOR_VERSION "1.0.0"
 #include "Reader.hpp"
 #include "Writer.hpp"
+#include "TypeTraits/STLTypes.hpp"
